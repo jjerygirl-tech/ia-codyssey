@@ -32,7 +32,8 @@ Windows CMD, Linux 권한, Docker, Git/GitHub를 실습하고 실제 명령과 �
 - [x] 볼륨 영속성 및 백업 검증
 - [x] 트러블슈팅 2건 이상 기록
 - [x] Git 설정 및 VS Code GitHub 연동
-- [ ] GitHub 업로드 및 최종 점검
+- [x] 최초 GitHub 업로드 및 웹페이지 표시 확인
+- [ ] 후속 증거 업로드 및 최종 점검
 
 ## 검증 스크린샷
 
@@ -1183,3 +1184,67 @@ drwxr-xr-x   5 root root  340 Nov  1 04:11 dev
 
 `-l`로 권한·소유자·크기 등을 확인했다.
 맨 앞의 `l`은 심볼릭 링크, `d`는 디렉터리를 뜻한다.
+
+## GitHub 업로드 검증
+
+### 스테이징과 검사
+
+```cmd
+git add README.md archive backups bind-demo empty.txt screenshots web
+git diff --cached --shortstat
+```
+
+실제 출력:
+```text
+31 files changed, 1203 insertions(+)
+```
+
+```cmd
+git diff --cached --check
+```
+
+출력이 없어 공백 오류가 발견되지 않았다.
+
+### 커밋
+
+```cmd
+git commit -m "Complete mission 1 practice and evidence"
+```
+
+실제 출력:
+```text
+[main 67e6cf3] Complete mission 1 practice and evidence
+31 files changed, 1203 insertions(+)
+```
+
+### Push와 원격 검증
+
+```cmd
+git push -u origin main
+```
+
+사용자가 전달한 실제 출력:
+```text
+branch 'main' set up to track 'origin/main'.
+Everything up-to-date
+```
+
+이 출력에는 커밋 전송 내역이 없어, 원격 브랜치를 별도로 조회했다.
+
+```cmd
+git ls-remote origin refs/heads/main
+```
+
+실제 출력:
+```text
+67e6cf34eba212d21b6ff81b22abc0f475dcdd91        refs/heads/main
+```
+
+원격 main이 실습 결과 커밋을 가리키는 것을 확인했다.
+
+![Git Push 실행 결과](screenshots/git-push-success.png)
+
+GitHub 웹페이지에서도 제출 폴더와 README 이미지가 표시되는 것을 확인했다.
+브라우저 자동 번역으로 문장이 다르게 보였으나, 원문 보기로 전환하자 로컬 문서와 같아졌다.
+
+이 절과 Push 캡처는 첫 업로드 이후 추가한 자료이므로 후속 커밋으로 반영한다.
