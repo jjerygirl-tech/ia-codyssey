@@ -1248,3 +1248,209 @@ GitHub 웹페이지에서도 제출 폴더와 README 이미지가 표시되는 �
 브라우저 자동 번역으로 문장이 다르게 보였으나, 원문 보기로 전환하자 로컬 문서와 같아졌다.
 
 이 절과 Push 캡처는 첫 업로드 이후 추가한 자료이므로 후속 커밋으로 반영한다.
+
+## 컨테이너 네트워크와 포트포워딩
+
+### 네트워크 네임스페이스란?
+
+네트워크 네임스페이스는 네트워크 환경을 분리하는 Linux 기능이다.
+이번에 사용한 기본 bridge 네트워크에서는 각 컨테이너가
+독립된 네트워크 인터페이스, IP 주소, 라우팅 정보와 포트 공간을 가진다.
+
+따라서 두 컨테이너의 NGINX가 각각 내부 포트 80을 사용해도
+서로 충돌하지 않는다.
+
+컨테이너 안에서 localhost는 해당 컨테이너 자신을 뜻한다.
+Windows에서 사용하는 localhost와는 별개의 네트워크 공간이다.
+
+### 호스트와 컨테이너의 포트 연결
+
+이번 실습에서는 다음과 같이 연결했다.
+
+| Windows 호스트 주소 | 연결 대상 | 컨테이너 내부 포트 |
+|---|---|---|
+| 127.0.0.1:8080 | codyssey-m1-web-8080 | 80 |
+| 127.0.0.1:8081 | codyssey-m1-web-8081 | 80 |
+
+실행 옵션 `-p 127.0.0.1:8080:80`의 의미는 다음과 같다.
+
+- `127.0.0.1`: Windows 호스트에서 접속할 루프백 주소
+- `8080`: 호스트에서 접속할 포트
+- `80`: 컨테이너 내부 NGINX가 요청을 받는 포트
+
+브라우저의 요청은 Windows 호스트 포트에 도착한 뒤,
+Docker Desktop의 포트 전달 기능을 통해 해당 컨테이너로 전달된다.
+이처럼 분리된 네트워크 공간 사이의 접속 경로를 마련하는 것이
+포트 매핑이다. Docker의 Linux bridge 네트워크에서는
+주소와 포트 변환 및 방화벽 규칙이 이 연결에 사용된다.
+
+### 실제 확인한 결과와 접속 범위
+
+8080과 8081에서 각각 HTTP 200 OK 응답을 확인했고,
+브라우저에서도 직접 작성한 웹페이지가 표시됐다.
+
+호스트 포트는 서로 다른 8080과 8081을 사용했다.
+같은 호스트 주소와 TCP 포트를 중복으로 할당하면 충돌할 수 있다.
+
+이번 설정은 127.0.0.1에 바인딩했으므로 이 PC에서 접속하는 용도다.
+다른 PC에서 접속하는 실험은 수행하지 않았다.
+
+참고 문서:
+[Docker 네트워크 개요](https://docs.docker.com/engine/network/)
+[Docker 포트 공개와 매핑](https://docs.docker.com/engine/network/port-publishing/)
+
+## 포트 충돌 진단·해제·복구
+
+AI 사전평가에서 포트 충돌 진단 설명이 부족하다는 지적을 받아,
+직접 만든 컨테이너로 충돌을 의도적으로 재현했다.
+
+### 1. 포트와 프로세스 확인
+
+Windows CMD에서 실행:
+```cmd
+netstat -ano -p tcp | findstr ":8080"
+```
+
+실제 출력:
+```text
+TCP    127.0.0.1:8080    0.0.0.0:0    LISTENING    2648
+```
+
+```cmd
+tasklist /FI "PID eq 2648"
+```
+
+프로세스는 `com.docker.backend.exe`, PID는 `2648`로 확인됐다.
+PID는 실행 시점에 따라 달라지므로 재현 시 다시 조회해야 한다.
+
+Docker 백엔드 전체를 종료하지 않고 포트를 사용하는 컨테이너를 확인했다.
+
+```cmd
+docker ps --filter "publish=8080" --format "table {{.Names}}\t{{.Ports}}"
+```
+
+실제 출력:
+```text
+NAMES                  PORTS
+codyssey-m1-web-8080   127.0.0.1:8080->80/tcp
+```
+
+### 2. 충돌 재현
+
+```cmd
+docker run -d --name codyssey-m1-port-conflict -p 127.0.0.1:8080:80 codyssey-m1-web:1.0
+```
+
+실제 오류 핵심 부분:
+```text
+Bind for 127.0.0.1:8080 failed: port is already allocated
+```
+
+기존 컨테이너가 같은 호스트 주소와 포트를 사용하고 있어 실패했다.
+컨테이너 ID가 먼저 출력됐지만 실행 성공으로 판단하지 않았다.
+
+![포트 충돌 오류](screenshots/docker-port-conflict.png)
+
+### 3. 포트 해제
+
+본인이 만든 기존 웹 컨테이너만 중지했다.
+
+```cmd
+docker stop codyssey-m1-web-8080
+```
+
+실제 출력:
+```text
+codyssey-m1-web-8080
+```
+
+```cmd
+netstat -ano -p tcp | findstr ":8080"
+```
+
+출력이 없어 해당 포트의 수신 행이 사라진 것을 확인했다.
+
+![8080 포트 해제 확인](screenshots/port-8080-released.png)
+
+### 4. 재시도와 추가 관찰
+
+```cmd
+docker start codyssey-m1-port-conflict
+```
+
+컨테이너 이름이 출력됐다.
+
+```cmd
+docker ps -a --filter "name=^/codyssey-m1-port-conflict$" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+실제 출력:
+```text
+NAMES                       STATUS          PORTS
+codyssey-m1-port-conflict   Up 19 seconds   80/tcp
+```
+
+```cmd
+docker port codyssey-m1-port-conflict
+```
+
+출력이 없었다. 컨테이너는 실행됐지만 실제 호스트 포트 매핑은
+확인되지 않아 해결 성공으로 기록하지 않았다.
+이 현상의 정확한 원인은 확정하지 않았다.
+
+### 5. 테스트 컨테이너 정리와 기존 서버 복구
+
+```cmd
+docker stop codyssey-m1-port-conflict
+docker rm codyssey-m1-port-conflict
+docker start codyssey-m1-web-8080
+```
+
+각 명령의 정상 출력을 확인했다.
+다른 사용자의 컨테이너나 Docker 백엔드 프로세스는 종료하지 않았다.
+
+```cmd
+docker port codyssey-m1-web-8080
+```
+
+실제 출력:
+```text
+80/tcp -> 127.0.0.1:8080
+```
+
+![포트 매핑 복구 확인](screenshots/docker-port-conflict-resolved.png)
+
+```cmd
+curl -i http://127.0.0.1:8080
+```
+
+실제 응답 발췌:
+```text
+HTTP/1.1 200 OK
+Server: nginx/1.30.6
+
+  <p>Hello Codyssey!</p>
+```
+
+포트 매핑과 웹 응답이 모두 복구된 것을 확인했다.
+포트 충돌 시에는 사용 프로세스와 컨테이너를 먼저 확인하고,
+본인 자원만 중지하거나 사용하지 않는 호스트 포트로 변경한다.
+
+## AI 사전평가와 보완
+
+### 최초 평가 결과
+- 총 18개 항목 중 16개 PASS, 2개 FAIL
+- 항목 13: 네트워크 네임스페이스와 포트 전달 원리 설명 부족
+- 항목 16: 포트 충돌 시 프로세스 확인과 포트 해제 절차 부족
+
+### 수행한 보완
+- 「컨테이너 네트워크와 포트포워딩」에 네트워크 분리,
+  호스트 바인딩, 포트 전달 원리와 접속 범위를 설명했다.
+- 「포트 충돌 진단·해제·복구」에 실제 명령과 결과를 기록했다.
+- 포트 충돌은 본인이 만든 컨테이너로 의도적으로 재현했다.
+- 포트 해제 후 기존 웹 서버의 매핑과 HTTP 200 OK 응답을 확인했다.
+- 추가한 증거 이미지 3개가 README 미리보기에 표시됨을 확인했다.
+
+### 현재 상태
+보완 내용의 GitHub 업로드와 AI 재평가는 아직 진행 전이다.
+재평가 통과 여부는 실제 결과를 받은 뒤 기록한다.
